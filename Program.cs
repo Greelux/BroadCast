@@ -4,74 +4,88 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 
-class Client
+class Server
 {
     const int BROADCAST_PORT = 5000;
     const int MULTICAST_PORT = 5001;
     const int TCP_PORT = 5002;
     const string MULTICAST_GROUP = "224.1.1.1";
 
-    static void ListenBroadcast()
+    static void BroadcastMessage(string msg)
     {
-        UdpClient udpClient = new UdpClient(BROADCAST_PORT);
-        IPEndPoint ep = new IPEndPoint(IPAddress.Any, BROADCAST_PORT);
-        Console.WriteLine("[Broadcast] Слухаю...");
-
-        while (true)
-        {
-            byte[] data = udpClient.Receive(ref ep);
-            Console.WriteLine(Encoding.UTF8.GetString(data));
-        }
+        UdpClient udpClient = new UdpClient();
+        udpClient.EnableBroadcast = true;
+        byte[] data = Encoding.UTF8.GetBytes(msg);
+        udpClient.Send(data, data.Length, new IPEndPoint(IPAddress.Broadcast, BROADCAST_PORT));
+        udpClient.Close();
     }
 
-    static void ListenMulticast()
+    static void MulticastMessage(string msg)
     {
-        UdpClient udpClient = new UdpClient(MULTICAST_PORT);
+        UdpClient udpClient = new UdpClient();
         udpClient.JoinMulticastGroup(IPAddress.Parse(MULTICAST_GROUP));
-        IPEndPoint ep = new IPEndPoint(IPAddress.Any, MULTICAST_PORT);
-        Console.WriteLine("[Multicast] Слухаю групу...");
-
-        while (true)
-        {
-            byte[] data = udpClient.Receive(ref ep);
-            Console.WriteLine(Encoding.UTF8.GetString(data));
-        }
+        byte[] data = Encoding.UTF8.GetBytes(msg);
+        udpClient.Send(data, data.Length, new IPEndPoint(IPAddress.Parse(MULTICAST_GROUP), MULTICAST_PORT));
+        udpClient.Close();
     }
 
-    static void GetPersonalMessage(string name)
+    static void HandleTCPClient(object obj)
     {
-        TcpClient tcpClient = new TcpClient("127.0.0.1", TCP_PORT);
-        NetworkStream stream = tcpClient.GetStream();
-
-        byte[] data = Encoding.UTF8.GetBytes(name);
-        stream.Write(data, 0, data.Length);
+        TcpClient client = (TcpClient)obj;
+        NetworkStream stream = client.GetStream();
 
         byte[] buffer = new byte[1024];
         int size = stream.Read(buffer, 0, buffer.Length);
-        Console.WriteLine(Encoding.UTF8.GetString(buffer, 0, size));
+        string name = Encoding.UTF8.GetString(buffer, 0, size);
+        string response = $"[USER:{name}] Привіт, {name}, не забудь забрати документи.";
 
-        tcpClient.Close();
+        byte[] responseData = Encoding.UTF8.GetBytes(response);
+        stream.Write(responseData, 0, responseData.Length);
+
+        client.Close();
+    }
+
+    static void StartTCPServer()
+    {
+        TcpListener listener = new TcpListener(IPAddress.Any, TCP_PORT);
+        listener.Start();
+        Console.WriteLine("[TCP] Сервер запущено...");
+
+        while (true)
+        {
+            TcpClient client = listener.AcceptTcpClient();
+            ThreadPool.QueueUserWorkItem(HandleTCPClient, client);
+        }
     }
 
     static void Main()
     {
         Console.OutputEncoding = Encoding.UTF8;
-        Console.Write("Ваше ім'я: ");
-        string name = Console.ReadLine();
-        Console.Write("Ваш поверх: ");
-        string floor = Console.ReadLine();
-
-        new Thread(ListenBroadcast).Start();
-        new Thread(ListenMulticast).Start();
+        Thread tcpThread = new Thread(StartTCPServer);
+        tcpThread.IsBackground = true;
+        tcpThread.Start();
 
         while (true)
         {
-            Console.WriteLine("\n1 - Отримати особисте повідомлення");
+            Console.WriteLine("\n1 - Надіслати [ALL]");
+            Console.WriteLine("2 - Надіслати [FLOOR:n]");
             Console.Write(">> ");
             string input = Console.ReadLine();
 
             if (input == "1")
-                GetPersonalMessage(name);
+            {
+                Console.Write("Оголошення: ");
+                string msg = Console.ReadLine();
+                BroadcastMessage($"[ALL] {msg}");
+            }
+            else if (input == "2")
+            {
+                Console.Write("Номер поверху: ");
+                string floor = Console.ReadLine();
+                Console.Write("Повідомлення: ");
+                string msg = Console.ReadLine();
+                MulticastMessage($"[FLOOR:{floor}] {msg}");
+            }
         }
     }
 }
